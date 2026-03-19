@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # appfabricx
 
 A new Flutter project.
@@ -15,3 +16,6 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+=======
+# AppFabrix--AI
+>>>>>>> e27c2d6f5320e3eb61cd0501bc3774bd5c1211b9
