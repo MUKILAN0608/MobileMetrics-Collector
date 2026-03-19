@@ -1,21 +1,106 @@
-<<<<<<< HEAD
-# appfabricx
+# AppFabric X
 
-A new Flutter project.
+Flutter app that streams Android system data (memory and battery) from a native foreground service to Flutter UI through a MethodChannel.
+
+## Features
+
+- Native Android foreground service (`SystemMonitorService`) runs periodic system monitoring
+- Data sent from Android to Flutter using `MethodChannel` (`appfabric/channel`)
+- Flutter UI updates live values in the app screen
+- Android 14+ compatible foreground service configuration
+
+## Tech Stack
+
+- Flutter (Dart)
+- Android native layer in Kotlin
+- MethodChannel bridge between Kotlin and Dart
+
+## Project Structure
+
+- `lib/main.dart`: Flutter UI and channel handler (`updateData`)
+- `android/app/src/main/kotlin/com/example/appfabricx/MainActivity.kt`: Flutter activity and channel initialization
+- `android/app/src/main/java/com/example/appfabricx/SystemMonitorService.kt`: Foreground service and system data collection
+- `android/app/src/main/AndroidManifest.xml`: Service declaration, permissions, and Flutter embedding metadata
+
+## Requirements
+
+- Flutter SDK (stable)
+- Dart SDK (bundled with Flutter)
+- Android Studio + Android SDK
+- Connected Android device or running emulator
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+1. Install dependencies:
 
-A few resources to get you started if this is your first Flutter project:
+```bash
+flutter pub get
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+2. Verify environment:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-=======
-# AppFabrix--AI
->>>>>>> e27c2d6f5320e3eb61cd0501bc3774bd5c1211b9
+```bash
+flutter doctor
+```
+
+3. Run the app:
+
+```bash
+flutter run
+```
+
+## How It Works
+
+1. `MainActivity` starts `SystemMonitorService` in `onStart()`.
+2. `SystemMonitorService` starts as a foreground service with a notification.
+3. Service collects memory and battery information every 2 seconds.
+4. Service sends payload string to Flutter via `MainActivity.channel?.invokeMethod("updateData", data)`.
+5. Flutter receives `updateData` and updates the displayed text.
+
+## Android Notes
+
+This project includes Android foreground service requirements for newer Android versions:
+
+- `android.permission.FOREGROUND_SERVICE`
+- `android.permission.FOREGROUND_SERVICE_DATA_SYNC`
+- `android:foregroundServiceType="dataSync"` on the service
+- `startForeground(..., ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)` on supported API levels
+- Flutter v2 embedding metadata in manifest (`flutterEmbedding = 2`)
+
+## Troubleshooting
+
+### Build failed due to use of deleted Android v1 embedding
+
+Ensure `AndroidManifest.xml` includes:
+
+```xml
+<meta-data
+	android:name="flutterEmbedding"
+	android:value="2" />
+```
+
+### MissingForegroundServiceTypeException / Lost connection to device
+
+Ensure all of the following are set:
+
+- Foreground service type in manifest
+- `FOREGROUND_SERVICE_DATA_SYNC` permission
+- Correct `startForeground(...)` overload with service type on Android Q+
+
+### Android SDK not detected (Windows)
+
+Set the SDK path, for example:
+
+```bash
+flutter config --android-sdk C:\\Users\\<YourUser>\\AppData\\Local\\Android\\Sdk
+```
+
+## Development Tips
+
+- Use `flutter logs` for runtime diagnosis.
+- Use `flutter clean` if Gradle/Flutter caches get out of sync.
+- Keep Android SDK tools outside the project source tree (do not copy SDK folders into `android/app/src/main/...`).
+
+## License
+
+This repository is licensed under the terms in `LICENSE`.
