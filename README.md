@@ -2,6 +2,16 @@
 
 Flutter app that streams Android system data (memory and battery) from a native foreground service to Flutter UI through a MethodChannel.
 
+## What It Does (Current Status)
+
+AppFabric X starts an Android foreground service when the app opens, reads device memory usage and battery percentage every 2 seconds, and sends that data to Flutter through a native channel. The Flutter screen displays the latest value in near real time.
+
+Current output format on screen:
+
+- Memory: <used_memory_in_bytes> | Battery: <battery_percent>
+
+In short, this is a working Android-to-Flutter system monitoring pipeline with a minimal live dashboard UI.
+
 ## Features
 
 - Native Android foreground service (`SystemMonitorService`) runs periodic system monitoring
