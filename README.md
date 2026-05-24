@@ -1,130 +1,171 @@
-# AppFabric X
+# AppFabric X — Runtime Telemetry
 
-Flutter app that streams Android system data (memory and battery) from a native foreground service to Flutter UI through a MethodChannel.
+Flutter + Android app for **continuous runtime telemetry** from up to **3 team phones**, with a **laptop API** that stores all data in **one SQLite table**.
 
-## What It Does (Current Status)
+**Package:** `com.example.appfabricx`  
+**App name on device:** AppFabric X  
+**Version:** 1.0.0
 
-AppFabric X starts an Android foreground service when the app opens, reads live device metrics, and sends them to Flutter through a native channel. The Flutter screen displays the latest values in near real time.
-
-Current output format on screen:
-
-- Timestamp: <date_time>
-- CPU usage: <percent> or <percent> (app) when system CPU access is restricted
-- Memory usage: <used_memory_mb> MB / <total_memory_mb> MB
-- Battery: <battery_percent>% | Drain: <rate>
-- Temperature: <battery_temperature_c>
-- Foreground app: <package_name>
-- Running apps: <count>
-- Process count: <count>
-
-In short, this is a working Android-to-Flutter system monitoring pipeline with a minimal live dashboard UI.
-
-## Latest Update
-
-- Added automatic Usage Access settings prompt when foreground app detection is not enabled.
-- Added safe CPU collection logic with a fallback to app CPU usage when `/proc/stat` is restricted on the device.
-- Added collection for CPU usage, memory usage, battery percentage and drain, temperature, foreground app, running apps, process count, and timestamp.
-- Moved monitoring work off the main thread so periodic sampling does not block the UI.
+---
 
 ## Features
 
-- Native Android foreground service (`SystemMonitorService`) runs periodic system monitoring
-- Data sent from Android to Flutter using `MethodChannel` (`appfabric/channel`)
-- Flutter UI updates live values in the app screen
-- Android 14+ compatible foreground service configuration
+- Foreground collection every **2–5 seconds**
+- **12 structured fields** per row (CPU, memory, battery, temperature, foreground app, runtime state, …)
+- **Per-user isolated tables** on each phone (`device1/2/3_runtime_metrics`)
+- **Unified laptop table** `telemetry_records` via REST API
+- **ngrok** support for remote teammates (no USB)
+- Live dashboard on phone + API stats on laptop
 
-## Tech Stack
+---
 
-- Flutter (Dart)
-- Android native layer in Kotlin
-- MethodChannel bridge between Kotlin and Dart
+## Project structure
 
-## Project Structure
-
-- `lib/main.dart`: Flutter UI and channel handler (`updateData`)
-- `android/app/src/main/kotlin/com/example/appfabricx/MainActivity.kt`: Flutter activity and channel initialization
-- `android/app/src/main/java/com/example/appfabricx/SystemMonitorService.kt`: Foreground service and system data collection
-- `android/app/src/main/AndroidManifest.xml`: Service declaration, permissions, and Flutter embedding metadata
-
-## Requirements
-
-- Flutter SDK (stable)
-- Dart SDK (bundled with Flutter)
-- Android Studio + Android SDK
-- Connected Android device or running emulator
-
-## Getting Started
-
-1. Install dependencies:
-
-```bash
-flutter pub get
+```
+appfabricx/
+├── android/          # Room DB, foreground service, API upload
+├── lib/              # Flutter dashboard
+├── server/           # Node.js telemetry API + SQLite
+├── config/           # API URL (local, gitignored)
+├── scripts/          # Build, ngrok, package APK
+├── docs/             # Detailed documentation
+└── dist/             # Packaged APK (gitignored)
 ```
 
-2. Verify environment:
+See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for the full tree.
 
-```bash
-flutter doctor
+---
+
+## Data collection (important)
+
+All metrics, schema, storage locations, and team assignment are documented here:
+
+**[docs/DATA_COLLECTION.md](docs/DATA_COLLECTION.md)**
+
+Target dataset size: **50,000–100,000+** records across varied workloads.
+
+---
+
+## Quick start (team lead laptop)
+
+### 1. Install dependencies
+
+- [Flutter](https://docs.flutter.dev/get-started/install)
+- [Node.js](https://nodejs.org/) 18+
+- [ngrok](https://ngrok.com/download) (for remote phones)
+
+### 2. Configure API URL (once per ngrok session)
+
+```powershell
+cd C:\Users\Mukil\appfabricx
+copy config\api-endpoint.txt.example config\api-endpoint.txt
+# Edit config\api-endpoint.txt — paste your https://....ngrok-free.app URL
+.\scripts\apply-api-endpoint.ps1
 ```
 
-3. Run the app:
+### 3. Start laptop API + tunnel
 
-```bash
-flutter run
+```powershell
+cd server
+npm install
+npm start
 ```
 
-## How It Works
+New terminal:
 
-1. `MainActivity` starts `SystemMonitorService` in `onStart()`.
-2. `SystemMonitorService` starts as a foreground service with a notification.
-3. Service collects memory and battery information every 2 seconds.
-4. Service sends payload string to Flutter via `MainActivity.channel?.invokeMethod("updateData", data)`.
-5. Flutter receives `updateData` and updates the displayed text.
-
-## Android Notes
-
-This project includes Android foreground service requirements for newer Android versions:
-
-- `android.permission.FOREGROUND_SERVICE`
-- `android.permission.FOREGROUND_SERVICE_DATA_SYNC`
-- `android:foregroundServiceType="dataSync"` on the service
-- `startForeground(..., ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)` on supported API levels
-- Flutter v2 embedding metadata in manifest (`flutterEmbedding = 2`)
-
-## Troubleshooting
-
-### Build failed due to use of deleted Android v1 embedding
-
-Ensure `AndroidManifest.xml` includes:
-
-```xml
-<meta-data
-	android:name="flutterEmbedding"
-	android:value="2" />
+```powershell
+ngrok http 3847
+# Or after setting a fixed domain in ngrok.yml:
+# ngrok start appfabric
 ```
 
-### MissingForegroundServiceTypeException / Lost connection to device
+Sync URL into project (optional):
 
-Ensure all of the following are set:
-
-- Foreground service type in manifest
-- `FOREGROUND_SERVICE_DATA_SYNC` permission
-- Correct `startForeground(...)` overload with service type on Android Q+
-
-### Android SDK not detected (Windows)
-
-Set the SDK path, for example:
-
-```bash
-flutter config --android-sdk C:\\Users\\<YourUser>\\AppData\\Local\\Android\\Sdk
+```powershell
+.\scripts\sync-ngrok-url.ps1
 ```
 
-## Development Tips
+### 4. Build & package APK for teammates
 
-- Use `flutter logs` for runtime diagnosis.
-- Use `flutter clean` if Gradle/Flutter caches get out of sync.
-- Keep Android SDK tools outside the project source tree (do not copy SDK folders into `android/app/src/main/...`).
+```powershell
+.\scripts\package-apk-for-download.ps1
+```
+
+Output (example):
+
+```
+dist/AppFabricX-Runtime-Telemetry-v1.0.0-b1.apk
+```
+
+Upload that file to **Google Drive / OneDrive** and share the download link.
+
+### 5. View collected data on laptop
+
+```powershell
+curl.exe http://localhost:3847/api/v1/stats
+curl.exe "http://localhost:3847/api/v1/telemetry/all?limit=20"
+```
+
+Or open `server/telemetry-server.db` → table **`telemetry_records`**.
+
+---
+
+## Quick start (teammate phone)
+
+1. Install **`AppFabricX-Runtime-Telemetry-v1.0.0-b1.apk`** from shared link.
+2. Allow **Install unknown apps** + **Usage access** + **Battery unrestricted**.
+3. Open **AppFabric X** → choose **User 1, 2, or 3** (one per person).
+4. Confirm **Cloud API connected** in the app.
+5. Keep the app / monitoring running.
+
+---
+
+## Scripts reference
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/apply-api-endpoint.ps1` | Apply `config/api-endpoint.txt` to app + server |
+| `scripts/sync-ngrok-url.ps1` | Read live ngrok URL and update config |
+| `scripts/start-ngrok.ps1` | Start API + ngrok |
+| `scripts/package-apk-for-download.ps1` | Build APK with proper filename |
+| `scripts/watch-api-laptop.ps1` | Live stats in terminal |
+
+---
+
+## Documentation
+
+| Doc | Topic |
+|-----|--------|
+| [docs/DATA_COLLECTION.md](docs/DATA_COLLECTION.md) | Schema, storage, team slots |
+| [docs/TELEMETRY_API.md](docs/TELEMETRY_API.md) | API endpoints |
+| [docs/NGROK.md](docs/NGROK.md) | Remote access with ngrok |
+| [docs/STABLE_API_URL.md](docs/STABLE_API_URL.md) | Constant URL workflow |
+
+---
+
+## Security & git
+
+**Never commit:**
+
+- `config/api-endpoint.txt` (real ngrok/cloud URL)
+- `server/ngrok-url.json`, `server/telemetry-server.db`
+- `.env`, `*.db`, `dist/*.apk`, `build/`
+
+Use the provided `*.example` files as templates. See [.gitignore](.gitignore).
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|-------|------------|
+| UI | Flutter (Dart) |
+| Native | Kotlin, Room, OkHttp |
+| Laptop API | Node.js, Express, better-sqlite3 |
+| Tunnel | ngrok (optional) |
+
+---
 
 ## License
 
-This repository is licensed under the terms in `LICENSE`.
+Academic / project use — update as required by your institution.

@@ -1,0 +1,11 @@
+# ngrok config — use a FIXED domain so the URL never changes (requires ngrok paid plan).
+# 1) Reserve a domain: https://dashboard.ngrok.com/cloud-edge/domains
+# 2) Uncomment domain below and run: ngrok start appfabric
+# 3) Put that same URL in config/api-endpoint.txt and run scripts/apply-api-endpoint.ps1
+
+version: "2"
+tunnels:
+  appfabric:
+    proto: http
+    addr: 3847
+    # domain: your-name.ngrok-free.app

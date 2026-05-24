@@ -1,0 +1,5 @@
+# Copy to api-endpoint.txt and set your team API URL (do not commit api-endpoint.txt)
+# Example ngrok: https://YOUR-SUBDOMAIN.ngrok-free.app
+# Example cloud: https://your-app.onrender.com
+
+https://YOUR-API-URL-HERE.ngrok-free.app

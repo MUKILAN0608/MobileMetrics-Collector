@@ -1,47 +1,59 @@
 package com.example.appfabricx
 
-import android.app.*
-import android.app.usage.UsageEvents
-import android.app.usage.UsageStatsManager
-import android.content.BroadcastReceiver
-import android.content.Context
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
-import android.os.*
-import android.text.format.DateFormat
-import android.util.Log
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import java.io.FileNotFoundException
-import java.io.RandomAccessFile
+import com.example.appfabricx.telemetry.ForegroundAppTracker
+import com.example.appfabricx.telemetry.PersistResult
+import com.example.appfabricx.telemetry.RuntimeStateClassifier
+import com.example.appfabricx.telemetry.RuntimeTelemetryCollector
+import com.example.appfabricx.telemetry.RuntimeTelemetryRepository
+import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Foreground service that continuously collects Android runtime telemetry
+ * every 2–5 seconds and persists structured records to Room.
+ */
 class SystemMonitorService : Service() {
 
-    private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var monitorThread: HandlerThread
     private lateinit var monitorHandler: Handler
-    private var previousBatteryLevel: Int? = null
-    private var previousBatteryTimeMs: Long? = null
-    private var cpuSamplingAvailable = true
-    private var cpuSamplingErrorLogged = false
-    private var previousAppCpuTimeMs: Long? = null
-    private var previousAppWallTimeMs: Long? = null
+
+    private lateinit var collector: RuntimeTelemetryCollector
+    private lateinit var stateClassifier: RuntimeStateClassifier
+    private lateinit var foregroundTracker: ForegroundAppTracker
+    private lateinit var repository: RuntimeTelemetryRepository
+
+    private var recordsCollected = 0L
 
     private val monitorTask = object : Runnable {
         override fun run() {
-            collectSystemData()
-            monitorHandler.postDelayed(this, 2000)
+            collectAndPersist()
+            val delayMs = collector.nextCollectionDelayMs()
+            monitorHandler.postDelayed(this, delayMs)
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        collector = RuntimeTelemetryCollector(this)
+        stateClassifier = RuntimeStateClassifier(this)
+        foregroundTracker = ForegroundAppTracker()
+        repository = RuntimeTelemetryRepository(this)
+
         monitorThread = HandlerThread("SystemMonitorWorker")
         monitorThread.start()
         monitorHandler = Handler(monitorThread.looper)
+
         startForegroundService()
         startMonitoring()
     }
@@ -52,23 +64,31 @@ class SystemMonitorService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "System Monitor",
-                NotificationManager.IMPORTANCE_LOW
-            )
+                "AppFabric Runtime Telemetry",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Continuous runtime monitoring for AppFabric X"
+            }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
 
+        val deviceSlot = repository.getAssignedDevice()
         val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("AppFabric Running")
-            .setContentText("Monitoring system...")
+            .setContentTitle("AppFabric X — Device $deviceSlot Monitoring")
+            .setContentText("Collecting runtime telemetry every 2–5s")
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setOngoing(true)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
         } else {
-            startForeground(1, notification)
+            startForeground(NOTIFICATION_ID, notification)
         }
     }
 
@@ -76,236 +96,82 @@ class SystemMonitorService : Service() {
         monitorHandler.post(monitorTask)
     }
 
-    private fun collectSystemData() {
-        val timestamp = DateFormat.format("yyyy-MM-dd HH:mm:ss", Date()).toString()
+    private fun collectAndPersist() {
+        val snapshot = collector.collect(stateClassifier, foregroundTracker)
+        val persistResult = repository.persist(snapshot)
+        recordsCollected++
 
-        val cpuUsage = getCpuUsagePercent()
-
-        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val memoryInfo = ActivityManager.MemoryInfo()
-        activityManager.getMemoryInfo(memoryInfo)
-
-        val usedMemory = memoryInfo.totalMem - memoryInfo.availMem
-        val usedMemoryMb = bytesToMb(usedMemory)
-        val totalMemoryMb = bytesToMb(memoryInfo.totalMem)
-
-        val batterySnapshot = getBatterySnapshot()
-        val batteryLevel = batterySnapshot.first
-        val temperatureC = batterySnapshot.second
-        val batteryDrainRate = getBatteryDrainRatePerHour(batteryLevel)
-
-        val foregroundApp = getForegroundAppPackageName()
-        val runningAppsCount = getRunningAppsCount(activityManager)
-        val processCount = getProcessCount(activityManager)
-
-        val data = buildString {
-            append("Timestamp: ").append(timestamp).append('\n')
-            append("CPU usage: ").append(cpuUsage).append("%\n")
-            append("Memory usage: ").append(String.format(Locale.US, "%.1f", usedMemoryMb))
-                .append(" MB / ")
-                .append(String.format(Locale.US, "%.1f", totalMemoryMb))
-                .append(" MB\n")
-            append("Battery: ").append(batteryLevel).append("%")
-                .append(" | Drain: ").append(batteryDrainRate).append("\n")
-            append("Temperature: ").append(temperatureC).append(" C\n")
-            append("Foreground app: ").append(foregroundApp).append("\n")
-            append("Running apps: ").append(runningAppsCount).append('\n')
-            append("Process count: ").append(processCount)
-        }
-
-        sendToFlutter(data)
+        val payload = buildTelemetryPayload(snapshot, persistResult)
+        sendToFlutter(payload)
+        updateNotification(snapshot, persistResult)
     }
 
-    private fun getBatterySnapshot(): Pair<Int, String> {
-        val intent = registerReceiver(null as BroadcastReceiver?, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-        val temperatureTenths = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+    private fun buildTelemetryPayload(
+        snapshot: RuntimeTelemetryCollector.Snapshot,
+        persistResult: PersistResult,
+    ): Map<String, Any?> {
+        val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        val memoryUsedMb = snapshot.memoryUsedBytes / (1024.0 * 1024.0)
+        val memoryAvailableMb = snapshot.memoryAvailableBytes / (1024.0 * 1024.0)
 
-        val percent = if (level >= 0 && scale > 0) {
-            (level * 100) / scale
-        } else {
-            val batteryManager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-            batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        }
-
-        val temperature = if (temperatureTenths >= 0) {
-            String.format(Locale.US, "%.1f", temperatureTenths / 10.0)
-        } else {
-            "N/A"
-        }
-
-        return Pair(percent, temperature)
-    }
-
-    private fun getBatteryDrainRatePerHour(currentBatteryLevel: Int): String {
-        val now = System.currentTimeMillis()
-        val previousLevel = previousBatteryLevel
-        val previousTime = previousBatteryTimeMs
-
-        previousBatteryLevel = currentBatteryLevel
-        previousBatteryTimeMs = now
-
-        if (previousLevel == null || previousTime == null || now <= previousTime) {
-            return "calculating..."
-        }
-
-        val deltaLevel = previousLevel - currentBatteryLevel
-        val elapsedHours = (now - previousTime) / 3600000.0
-        if (elapsedHours <= 0.0) return "calculating..."
-
-        return if (deltaLevel < 0) {
-            "charging"
-        } else {
-            val rate = deltaLevel / elapsedHours
-            String.format(Locale.US, "%.2f%%/h", rate)
-        }
-    }
-
-    private fun getCpuUsagePercent(): String {
-        if (!cpuSamplingAvailable) {
-            val appCpu = getAppCpuUsagePercent()
-            return if (appCpu >= 0f) {
-                String.format(Locale.US, "%.2f (app)", appCpu)
-            } else {
-                "Restricted"
-            }
-        }
-        val cpu = getCpuUsage()
-        return if (cpu >= 0f) String.format(Locale.US, "%.2f", cpu) else "N/A"
-    }
-
-    private fun getAppCpuUsagePercent(): Float {
-        val nowCpuMs = Process.getElapsedCpuTime()
-        val nowWallMs = SystemClock.elapsedRealtime()
-
-        val prevCpuMs = previousAppCpuTimeMs
-        val prevWallMs = previousAppWallTimeMs
-
-        previousAppCpuTimeMs = nowCpuMs
-        previousAppWallTimeMs = nowWallMs
-
-        if (prevCpuMs == null || prevWallMs == null) return -1f
-
-        val deltaCpuMs = nowCpuMs - prevCpuMs
-        val deltaWallMs = nowWallMs - prevWallMs
-        if (deltaWallMs <= 0L) return -1f
-
-        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
-        val usage = (deltaCpuMs.toFloat() / (deltaWallMs.toFloat() * cores)) * 100f
-        return usage.coerceIn(0f, 100f)
-    }
-
-    private fun getCpuUsage(): Float {
-        return try {
-            val reader = RandomAccessFile("/proc/stat", "r")
-            val load1 = reader.readLine()
-            val toks1 = load1.split("\\s+".toRegex())
-            if (toks1.size < 8) {
-                reader.close()
-                return -1f
-            }
-
-            val idle1 = toks1[4].toLong()
-            val cpu1 = toks1[1].toLong() + toks1[2].toLong() +
-                toks1[3].toLong() + toks1[5].toLong() +
-                toks1[6].toLong() + toks1[7].toLong()
-
-            Thread.sleep(360)
-
-            reader.seek(0)
-            val load2 = reader.readLine()
-            val toks2 = load2.split("\\s+".toRegex())
-            if (toks2.size < 8) {
-                reader.close()
-                return -1f
-            }
-
-            val idle2 = toks2[4].toLong()
-            val cpu2 = toks2[1].toLong() + toks2[2].toLong() +
-                toks2[3].toLong() + toks2[5].toLong() +
-                toks2[6].toLong() + toks2[7].toLong()
-
-            reader.close()
-
-            val cpuDiff = cpu2 - cpu1
-            val idleDiff = idle2 - idle1
-            if (cpuDiff + idleDiff <= 0L) return -1f
-
-            ((cpuDiff.toFloat() / (cpuDiff + idleDiff)) * 100f).coerceIn(0f, 100f)
-        } catch (exception: Exception) {
-            if (exception is FileNotFoundException && exception.message?.contains("EACCES") == true) {
-                cpuSamplingAvailable = false
-                if (!cpuSamplingErrorLogged) {
-                    cpuSamplingErrorLogged = true
-                    Log.w("SystemMonitorService", "CPU sampling via /proc/stat is restricted on this device")
-                }
-                return -1f
-            }
-            if (!cpuSamplingErrorLogged) {
-                cpuSamplingErrorLogged = true
-                Log.w("SystemMonitorService", "Unable to read CPU stats", exception)
-            }
-            -1f
-        }
-    }
-
-    private fun getForegroundAppPackageName(): String {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            return "Not supported"
-        }
-
-        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        val mode = appOps.checkOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            Process.myUid(),
-            packageName
+        return mapOf(
+            "timestamp" to formatter.format(Date(snapshot.timestampMs)),
+            "timestamp_ms" to snapshot.timestampMs,
+            "cpu_usage" to snapshot.cpuUsagePercent,
+            "memory_used" to snapshot.memoryUsedBytes,
+            "memory_available" to snapshot.memoryAvailableBytes,
+            "memory_used_mb" to memoryUsedMb,
+            "memory_available_mb" to memoryAvailableMb,
+            "memory_used_percent" to snapshot.memoryUsedPercent,
+            "battery_percentage" to snapshot.batteryPercentage,
+            "charging_status" to snapshot.chargingStatus,
+            "device_temperature" to snapshot.deviceTemperatureC,
+            "process_count" to snapshot.processCount,
+            "foreground_app" to snapshot.foregroundApp,
+            "running_apps_count" to snapshot.runningAppsCount,
+            "runtime_state" to snapshot.runtimeState,
+            "app_switches_in_interval" to snapshot.appSwitchesInInterval,
+            "assigned_device" to repository.getAssignedDevice(),
+            "records_collected_session" to recordsCollected,
+            "table_name" to persistResult.writtenTable,
+            "db_saved" to persistResult.success,
+            "db_last_record_id" to persistResult.lastRecordId,
+            "db_total_device1" to persistResult.totalDevice1,
+            "db_total_device2" to persistResult.totalDevice2,
+            "db_total_device3" to persistResult.totalDevice3,
+            "db_written_tables" to persistResult.writtenTables,
+            "db_error" to persistResult.errorMessage,
+            "assigned_device_slot" to persistResult.assignedDeviceSlot,
+            "user_label" to persistResult.userLabel,
+            "isolated_mode" to repository.isIsolatedPerUserTables(),
+            "api_sync" to persistResult.apiSync,
         )
-
-        if (mode != AppOpsManager.MODE_ALLOWED) {
-            return "Usage access not granted"
-        }
-
-        val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val endTime = System.currentTimeMillis()
-        val startTime = endTime - 10_000
-
-        val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
-        val event = UsageEvents.Event()
-        var latestForegroundPackage: String? = null
-
-        while (usageEvents.hasNextEvent()) {
-            usageEvents.getNextEvent(event)
-            if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
-                latestForegroundPackage = event.packageName
-            }
-        }
-
-        return latestForegroundPackage ?: "Unknown"
     }
 
-    private fun getRunningAppsCount(activityManager: ActivityManager): Int {
-        val packageNames = mutableSetOf<String>()
-        activityManager.runningAppProcesses?.forEach { processInfo ->
-            processInfo.pkgList?.forEach { packageName ->
-                packageNames.add(packageName)
-            }
-        }
-        return packageNames.size
+    private fun updateNotification(
+        snapshot: RuntimeTelemetryCollector.Snapshot,
+        persistResult: PersistResult,
+    ) {
+        val channelId = "monitor_channel"
+        val dbLabel = if (persistResult.success) "DB OK" else "DB ERR"
+        val apiLabel = apiSyncLabel(persistResult.apiSync)
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("Device ${repository.getAssignedDevice()} — ${snapshot.runtimeState}")
+            .setContentText(
+                "$dbLabel | $apiLabel | CPU ${String.format(Locale.US, "%.0f", snapshot.cpuUsagePercent)}% | " +
+                    "D1:${persistResult.totalDevice1} D2:${persistResult.totalDevice2} " +
+                    "D3:${persistResult.totalDevice3}",
+            )
+            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setOngoing(true)
+            .build()
+
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, notification)
     }
 
-    private fun getProcessCount(activityManager: ActivityManager): Int {
-        return activityManager.runningAppProcesses?.size ?: 0
-    }
-
-    private fun bytesToMb(bytes: Long): Double {
-        return bytes / (1024.0 * 1024.0)
-    }
-
-    private fun sendToFlutter(data: String) {
-        mainHandler.post {
-            MainActivity.channel?.invokeMethod("updateData", data)
-        }
+    private fun sendToFlutter(payload: Map<String, Any?>) {
+        MainActivity.notifyTelemetryUpdate(payload)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -319,4 +185,19 @@ class SystemMonitorService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun apiSyncLabel(apiSync: Map<String, Any?>?): String {
+        if (apiSync == null) return "API …"
+        val skipped = apiSync["skipped"] == true
+        if (skipped) return "API off"
+        val success = apiSync["success"] == true
+        val error = apiSync["error"]?.toString().orEmpty()
+        if (!success && error.isNotEmpty()) return "API ERR"
+        val inserted = (apiSync["inserted"] as? Number)?.toInt() ?: 0
+        return if (inserted > 0) "API +$inserted" else "API OK"
+    }
+
+    companion object {
+        private const val NOTIFICATION_ID = 1
+    }
 }

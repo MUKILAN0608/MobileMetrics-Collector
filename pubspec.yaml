@@ -1,5 +1,5 @@
 name: appfabricx
-description: "A new Flutter project."
+description: "AppFabric X - Android runtime telemetry collection and team API sync."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev

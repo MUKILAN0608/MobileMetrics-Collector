@@ -1,45 +1,83 @@
-# Miscellaneous
+# --- Secrets & local config (never commit) ---
+.env
+.env.*
+!.env.example
+config/api-endpoint.txt
+server/ngrok-url.json
+**/secrets/
+**/*-secret.*
+**/*.pem
+**/*.keystore
+**/*.jks
+**/key.properties
+**/google-services.json
+
+# --- ngrok / local tunnel ---
+.ngrok2/
+ngrok.log
+
+# --- Databases & exported telemetry ---
+*.db
+*.db-shm
+*.db-wal
+telemetry.db
+telemetry-live.db
+telemetry-server.db
+server/telemetry-server.db
+telemetry_export/
+**/telemetry_export/
+
+# --- Build outputs ---
+/build/
+/dist/
+*.apk
+*.aab
+*.ipa
 *.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
+*.dex
 
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
-.idea/
+# --- Node.js (API server) ---
+server/node_modules/
+npm-debug.log*
+yarn-error.log*
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
+# --- Flutter / Dart ---
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-/build/
+**/doc/api/
 /coverage/
 
-# Symbolication related
+# --- Android ---
+/android/.gradle/
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+/android/app/src/main/kotlin/cmdline-tools/
+/android/local.properties
+/android/**/GeneratedPluginRegistrant.java
+*.iml
+*.ipr
+*.iws
+
+# --- iOS (if present) ---
+**/ios/Flutter/.last_build_id
+**/ios/Pods/
+**/ios/.symlinks/
+
+# --- IDE & OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+.atom/
+.history/
+*.log
+
+# --- Misc ---
 app.*.symbols
-
-# Obfuscation related
 app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
+migrate_working_dir/
